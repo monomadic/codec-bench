@@ -37,10 +37,13 @@ you want index to mean before trusting any VFR number.
 
 ## Pinning
 
-FilmCraft is a git dependency pinned to one revision in the workspace `Cargo.toml` (currently the
-one EffectCraft uses). It moves fast and its API changes; EffectCraft's hardware-decode PR records
-what a 1078-commit bump broke (timestamp rounding, VP9 frame threading, renamed fields). Bump on
-purpose, re-run the fixtures set with `--hash`, and keep the previous `runs/` directory to diff.
+FilmCraft is a git dependency pinned to one revision in the workspace `Cargo.toml`: `cee1feb`
+(upstream main, 2026-10-13), 1643 commits past the `2c5ba7a` EffectCraft pins. The bump cost
+nothing here (this harness touches only `open_bytes`, `MediaInfo.video`, `video_frame` and the
+frame enums) and fixed the HEVC seek failure. EffectCraft's hardware-decode PR records what the
+same bump broke for a larger surface (timestamp rounding, VP9 frame threading, renamed fields).
+Bump on purpose, re-run the fixtures set with `--hash`, and keep the previous `runs/` directory
+to diff. A local checkout at `../filmcraft` can be used through the `[patch]` block.
 
 ## Conformance hashes
 
@@ -58,16 +61,27 @@ near-misses.
 ## Hardware decode
 
 The comparison switchblade needs is VideoToolbox through libav versus VideoToolbox through
-FilmCraft's `filmcraft-platform`. The first half exists (`libav-vt`, in the `libav` feature);
-the second is a `filmcraft-hw` feature that depends on `filmcraft-platform` at a newer pin than
-the current one (it holds the FFI). Report software and hardware backends as separate columns;
-never average them. `libav-vt` downloads every frame to CPU planes so it can be hashed; a
-zero-copy texture path would be faster in an app and is out of the harness's scope.
+FilmCraft's `filmcraft-platform`: `libav-vt` (in the `libav` feature) and `filmcraft-hw` (its
+own feature; `filmcraft-platform` holds the FFI). The hardware switch in FilmCraft is
+process-global and read when a stream's decoder is created, so the backend sets it before every
+request; `compare` runs two backends in one process. Report software and hardware backends as
+separate columns; never average them. Both hardware backends download every frame to CPU planes
+so it can be hashed; a zero-copy texture path would be faster in an app and is out of scope.
+
+## Seek truth
+
+A seek's correct answer is the frame the same reference produces by decoding sequentially to
+that index, not what the reference's own seek returns: ffmpeg's seek is wrong on RASL leading
+pictures of open-GOP HEVC (frames 246–249 before a CRA at 250 come back as the CRA). The seek
+table therefore needs a `decode` run with `--hash` over the whole file; without one it falls
+back to the reference's seek and marks the cell `~`.
 
 ## Next steps, in order
 
 1. ~~`libav` backend (port `SeekablePlayer`)~~ done; `libav-vt` too.
 2. Conformance adapters for libvpx/AOM `.md5` files (the easy ones), then JCT-VC SEI hashes.
-3. `filmcraft-hw` feature at a newer FilmCraft pin; VideoToolbox rows.
-4. A `library` set from real clips (phone VFR, HDR, iCloud placeholders) with a `scripts/add-library.sh` that writes manifest rows.
-5. First `backend-own` target: ProRes 422 (SMPTE RDD 36), judged against ffmpeg with PSNR ≥ 70 dB and against FilmCraft bit-exactly if you choose the same rounding.
+3. ~~`filmcraft-hw` feature at a newer FilmCraft pin~~ done.
+4. A PSNR column in the report's seek and decode tables, so one-LSB differences (ProRes) read as
+   near-exact rather than wrong; needs frames or a second hash of the frame quantised by one bit.
+5. A `library` set from real clips (phone VFR, HDR, iCloud placeholders) with a `scripts/add-library.sh` that writes manifest rows.
+6. First `backend-own` target: ProRes 422 (SMPTE RDD 36), judged against ffmpeg with PSNR ≥ 70 dB and against FilmCraft bit-exactly if you choose the same rounding.

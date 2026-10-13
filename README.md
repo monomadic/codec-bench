@@ -9,6 +9,7 @@ happened: how fast, how much CPU, whether the pixels agree, and how each one fai
 | `libav` (feature) | in-process libav via rsmpeg, resident demuxer + decoder; a port of switchblade's `SeekablePlayer` without the playback machinery | the fair seek baseline |
 | `libav-vt` (feature, macOS) | the same with the VideoToolbox hwaccel, frames downloaded to CPU planes | the hardware baseline FilmCraft's `filmcraft-platform` has to match |
 | `filmcraft` | FilmCraft's pure-Rust demuxers and decoders, git-pinned | what EffectCraft ships; the "could we drop ffmpeg" candidate |
+| `filmcraft-hw` (feature) | the same with `filmcraft-platform` registered: VideoToolbox / Media Foundation / NVDEC / VA-API in front of the software decoders, automatic fallback | the pure-Rust answer to `libav-vt`; its `pixel_format` says which decoder actually ran |
 | `own` | your decoder crates | starts by failing every file; the report is the ladder |
 
 The default build links nothing: it needs only the `ffmpeg`/`ffprobe` binaries on `PATH` for the
@@ -22,7 +23,7 @@ pkg-config at the keg).
 cargo build --release
 ./scripts/make-fixtures.sh                # ffmpeg-generated clips → corpus/files/ (gitignored)
 ./target/release/codec-bench suite --hash --max-frames 300 --seeks 12
-cargo build --release --features libav      # adds the in-process libav and libav-vt backends
+cargo build --release --features libav,filmcraft-hw   # adds libav, libav-vt and filmcraft-hw
 ./target/release/codec-bench report runs/<timestamp>
 ```
 
@@ -55,23 +56,29 @@ converter's. Frame MD5s are the harness's own convention (planes concatenated, 1
 little-endian); conformance suites' reference MD5s use their own layouts and need per-suite
 adapters (see `docs/DESIGN.md`).
 
-## What the first runs showed (macOS, Apple silicon, 120 frames, 12 seeks)
+## What the first runs showed (macOS, Apple silicon, whole files, 12 seeks)
 
-Numbers are from `runs/smoke-libav` on this machine and will differ on yours; they are here to
-show the kind of thing the harness finds, not as results.
+Numbers are from `runs/all` on this machine (FilmCraft at `cee1feb`, 2026-10-13) and will differ
+on yours; they are here to show the kind of thing the harness finds, not as results.
 
 Exact random seeks on long-GOP (250) fixtures, p50 ms:
 
-| file | ffmpeg CLI | libav | libav-vt | filmcraft |
-|---|---|---|---|---|
-| H.264 1080p | 146 | 79 | 234 | 168 |
-| H.264 2160p | 370 | 262 | 543 | 508 |
-| HEVC 1080p 10-bit | 189 | 130 | 52 | error |
-| VP9 1080p | 157 | 95 | 246 | 368 |
-| AV1 1080p | 143 | 110 | 186 | 1345 |
-| ProRes 422 | 106 | 22 | n/a | 3.6 |
+| file | ffmpeg CLI | libav | libav-vt | filmcraft | filmcraft-hw |
+|---|---|---|---|---|---|
+| H.264 1080p | 145 | 90 | 301 | 150 | 71 |
+| H.264 2160p | 394 | 240 | 597 | 542 | 224 |
+| HEVC 1080p 8-bit | 111 | 73 | 151 | 112 | 56 |
+| HEVC 1080p 10-bit | 179 | 123 | 53 | 149 | 70 |
+| VP9 1080p | 164 | 99 | 258 | 233 | 210 (software) |
+| AV1 1080p | 146 | 111 | 182 | 812 | 838 (software) |
+| ProRes 422 | 114 | 24 | n/a | 3.3 | 3.5 |
+
+- **ffmpeg returns the wrong picture for exact seeks into open-GOP HEVC.** Seeking to frame 248 of a stream whose next CRA is frame 250 gives the CRA picture, both from the CLI's `-ss` and from in-process `avformat_seek_file` + decode-forward, software or VideoToolbox. Frames 246–249 are RASL leading pictures that follow the CRA in decode order; libav discards them after a random access. FilmCraft decodes them and returns the frame that ffmpeg's own *sequential* decode produces for that index. This is why the seek table's `true` column judges against sequential decode, not against the reference's seek.
+- **FilmCraft's hardware path (VideoToolbox) is bit-exact with the software decoders and with ffmpeg**, and is faster than libav's VideoToolbox on exact seeks (71 vs 301 ms on H.264 1080p) because FilmCraft decodes the GOP from the keyframe while libav also downloads every intermediate frame. VP9 and AV1 fall through to software, and the tag says so.
+- **FilmCraft's HEVC seek failure at the old pin (`2c5ba7a`) is fixed at `cee1feb`.** AV1 seeks went from 1345 to 812 ms between the pins; sequential AV1 is still ~10× slower than dav1d.
 
 - **In-process libav is bit-exact with the CLI everywhere, and so is VideoToolbox** on these fixtures (NV12/P010 de-interleaved; samples identical). So a hardware path can be checked for correctness, not just speed.
+- **ProRes shows `0/12` true seeks for FilmCraft**: that is the one-LSB rounding difference from the decode table, not wrong frames (`compare` gives 74.5 dB). A bit-exact column cannot tell the two apart; PSNR can.
 - **VideoToolbox seeks are slower in wall time than software on long-GOP 8-bit H.264 and VP9, at a tenth of the CPU.** An exact seek is a serial GOP decode (~7 ms/frame under VT, as switchblade's design record says); software fans the GOP across cores. VT wins outright on 10-bit HEVC. This is the number that settles scrub = keyframe seeks, settle = one exact seek.
 - **Sequential decode CPU per frame**, 1080p H.264: CLI 11.8, libav 9.0, VT 5.0, FilmCraft 16.3 core-ms. `libav-vt` wall per frame includes the download to CPU memory (~3 ms at 1080p).
 
@@ -79,7 +86,6 @@ Exact random seeks on long-GOP (250) fixtures, p50 ms:
 - **ProRes differs by one LSB** (luma PSNR ≈ 74.5 dB): expected, ProRes has no normative decoder; the report says "differs @0" because it is strictly about bit-exactness.
 - **FilmCraft is faster than ffmpeg's software path on H.264 and 10-bit HEVC in wall time, but spends more CPU** (it threads wider): 1080p long-GOP H.264 at 1.6 vs 2.6 ms/frame wall, 20 vs 16 core-ms.
 - **FilmCraft's AV1 decoder is ~10× slower** than ffmpeg's (dav1d): 22 vs 2.3 ms/frame.
-- **FilmCraft's HEVC seek fails** on one target with "frame not produced" (five of six seeks succeed). A real bug at the pinned revision; re-test at a newer pin.
 - **ffmpeg conceals the bit-flipped file and keeps going; FilmCraft stops at the first invalid `ref_idx`.** Neither crashed. Whether to conceal or stop is a policy question the harness just records.
 - The ffmpeg CLI backend's seek numbers are process spawns (its floor is ~100 ms even on intra-only ProRes, where libav takes 22 ms); that is why switchblade moved to in-process libav.
 - On the bit-flipped file `libav-vt` stops with an opaque VideoToolbox error while software libav conceals; the two ffmpeg paths differ in robustness, not only speed.

@@ -12,6 +12,8 @@ pub fn all() -> &'static [BackendDesc] {
         backend_ffmpeg::libav::DESC_VT,
         #[cfg(feature = "filmcraft")]
         backend_filmcraft::DESC,
+        #[cfg(feature = "filmcraft-hw")]
+        backend_filmcraft::DESC_HW,
         #[cfg(feature = "own")]
         backend_own::DESC,
     ]

@@ -59,19 +59,21 @@ pub fn render(dir: &Path, reference: &str) -> Result<String> {
                 }
             }
             Scenario::Seek => {
-                md.push_str(&format!("Exact random seeks: p50 / p95 ms. Same: the seeked frames' MD5s equal `{reference}`'s for the same targets. The `ffmpeg` CLI backend respawns a process per seek, so its numbers are a ceiling, not a baseline (build with `--features libav` for in-process numbers).\n\n"));
-                md.push_str(&header(&backends, &["p50", "p95", "same"]));
+                md.push_str(&format!("Exact random seeks: p50 / p95 ms. True: the seeked frame's MD5 equals the frame at that index in `{reference}`'s *sequential* decode of the same file (ground truth, needs a decode run with `--hash` that covers the index); otherwise falls back to `{reference}`'s own seek result for that target, marked `~`. The `ffmpeg` CLI backend respawns a process per seek, so its numbers are a ceiling, not a baseline (build with `--features libav` for in-process numbers).\n\n"));
+                md.push_str(&header(&backends, &["p50", "p95", "true"]));
                 for (file, rs) in &rows {
                     let r_ref = rs.iter().find(|r| r.backend == reference);
+                    let truth = results.iter().find(|r| r.backend == reference && r.scenario == Scenario::Decode && short(&r.file) == *file && !r.frame_md5.is_empty());
                     let cells: Vec<String> = backends
                         .iter()
                         .map(|b| match rs.iter().find(|r| &r.backend == b) {
                             Some(r) if r.outcome == Outcome::Ok => {
                                 let s = r.seek_ms.clone().unwrap_or_default();
-                                let same = match r_ref {
-                                    Some(x) if x.backend == r.backend => "ref".to_string(),
-                                    Some(x) => seek_sameness(x, r),
-                                    None => "—".into(),
+                                let same = match (truth, r_ref) {
+                                    (Some(t), _) if r.seeks.iter().all(|s| (s.index as usize) < t.frame_md5.len()) => seek_truth(t, r),
+                                    (_, Some(x)) if x.backend == r.backend => "ref".to_string(),
+                                    (_, Some(x)) => format!("~{}", seek_sameness(x, r)),
+                                    _ => "—".into(),
                                 };
                                 format!("{:.1} / {:.1} / {same}", s.p50, s.p95)
                             }
@@ -136,6 +138,26 @@ fn exactness(reference: &[String], other: &[String]) -> String {
         Some(i) => format!("differs @{i}"),
         None if reference.len() == other.len() => format!("exact ({})", other.len()),
         None => format!("prefix exact ({} vs {})", other.len(), reference.len()),
+    }
+}
+
+/// Seeked frames against the reference's sequential decode: "n/m", listing the wrong indices.
+fn seek_truth(decode: &RunResult, other: &RunResult) -> String {
+    let mut wrong = Vec::new();
+    let mut total = 0;
+    for s in &other.seeks {
+        let (Some(m), Some(t)) = (&s.md5, decode.frame_md5.get(s.index as usize)) else { continue };
+        total += 1;
+        if m != t {
+            wrong.push(s.index.to_string());
+        }
+    }
+    if total == 0 {
+        "—".into()
+    } else if wrong.is_empty() {
+        format!("{total}/{total}")
+    } else {
+        format!("{}/{total} (wrong: {})", total - wrong.len(), wrong.join(","))
     }
 }
 

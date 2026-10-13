@@ -38,6 +38,9 @@ struct ScenarioOpts {
     /// Record a per-frame MD5 (the report needs it for bit-exact comparison).
     #[arg(long)]
     hash: bool,
+    /// Seek to these frame indices (comma-separated) instead of random targets.
+    #[arg(long, value_delimiter = ',')]
+    targets: Vec<u64>,
 }
 
 #[derive(Subcommand)]
@@ -146,6 +149,6 @@ fn main() -> Result<()> {
 
 impl From<ScenarioOpts> for scenarios::Opts {
     fn from(o: ScenarioOpts) -> Self {
-        scenarios::Opts { max_frames: o.max_frames, seeks: o.seeks, seed: o.seed, hash: o.hash }
+        scenarios::Opts { max_frames: o.max_frames, seeks: o.seeks, seed: o.seed, hash: o.hash, targets: o.targets }
     }
 }

@@ -12,6 +12,8 @@ pub struct Opts {
     pub seeks: u32,
     pub seed: u64,
     pub hash: bool,
+    /// Explicit seek targets instead of random ones.
+    pub targets: Vec<u64>,
 }
 
 pub fn run(desc: BackendDesc, file: &Path, scenario: Scenario, opts: &Opts) -> RunResult {
@@ -33,6 +35,8 @@ pub fn run(desc: BackendDesc, file: &Path, scenario: Scenario, opts: &Opts) -> R
     if let Err(e) = res {
         r = r.fail(&e);
     }
+    // Again after decoding: backends may learn which decoder actually ran from the first picture.
+    r.info = Some(dec.info().clone());
     r
 }
 
@@ -71,10 +75,10 @@ fn seek(dec: &mut dyn harness_core::Decoder, r: &mut RunResult, opts: &Opts) -> 
     // Prime once so the first seek isn't also the first decode (decoder tables, thread pools).
     let _ = dec.next_frame()?;
     let mut rng = Rng::new(opts.seed);
+    let targets: Vec<u64> = if opts.targets.is_empty() { (0..opts.seeks).map(|_| rng.below(total)).collect() } else { opts.targets.clone() };
     let mut times = Vec::new();
     let t0 = Instant::now();
-    for _ in 0..opts.seeks {
-        let index = rng.below(total);
+    for index in targets {
         let t = Instant::now();
         dec.seek(index)?;
         let frame = dec.next_frame()?;

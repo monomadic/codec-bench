@@ -130,6 +130,9 @@ fn run_one(exe: &Path, backend: &str, sc: Scenario, file: &Path, timeout: f64, o
     if opts.hash {
         cmd.arg("--hash");
     }
+    if !opts.targets.is_empty() {
+        cmd.arg("--targets").arg(opts.targets.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","));
+    }
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let before = children_usage();

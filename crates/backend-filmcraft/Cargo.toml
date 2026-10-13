@@ -5,8 +5,14 @@ edition.workspace = true
 license.workspace = true
 description = "FilmCraft's pure-Rust demuxers and decoders (what EffectCraft uses), pinned to one git revision"
 
+[features]
+# `filmcraft-hw`: the OS hardware decoder in front of FilmCraft's software ones. Pulls in
+# filmcraft-platform (objc2 on macOS, `windows` on Windows, dlopen'd drivers on Linux).
+hw = ["dep:filmcraft-platform"]
+
 [dependencies]
 harness-core = { workspace = true }
+filmcraft-platform = { workspace = true, optional = true }
 filmcraft-codecs = { workspace = true }
 filmcraft-media = { workspace = true }
 filmcraft-frame = { workspace = true }

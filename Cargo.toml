@@ -23,12 +23,15 @@ md-5 = "0.10"
 libc = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
-# FilmCraft's pure-Rust codecs, pinned to the revision EffectCraft uses (2026-10-03).
+# FilmCraft's pure-Rust codecs, pinned to upstream main of 2026-10-13 (the first revisions with
+# `filmcraft-platform` are from 2026-10-10; EffectCraft still pins 2c5ba7a of 2026-10-03).
 # Bump deliberately: the API moves (see docs/DESIGN.md "Pinning").
-filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
-filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
-filmcraft-frame = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
-filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
+filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "cee1feb185e675a108f78067f71ad86a640ace3d" }
+filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "cee1feb185e675a108f78067f71ad86a640ace3d" }
+filmcraft-frame = { git = "https://github.com/storytold/filmcraft", rev = "cee1feb185e675a108f78067f71ad86a640ace3d" }
+filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "cee1feb185e675a108f78067f71ad86a640ace3d" }
+# OS hardware decoders (VideoToolbox / Media Foundation / NVDEC / VA-API); the one FilmCraft crate with FFI.
+filmcraft-platform = { git = "https://github.com/storytold/filmcraft", rev = "cee1feb185e675a108f78067f71ad86a640ace3d" }
 
 # Local co-development against a FilmCraft checkout next to this repo: uncomment.
 # [patch."https://github.com/storytold/filmcraft"]
@@ -36,6 +39,7 @@ filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7
 # filmcraft-media = { path = "../filmcraft/crates/media" }
 # filmcraft-frame = { path = "../filmcraft/crates/frame" }
 # filmcraft-time = { path = "../filmcraft/crates/time" }
+# filmcraft-platform = { path = "../filmcraft/crates/platform" }
 
 [profile.release]
 debug = 1

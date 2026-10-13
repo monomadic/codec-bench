@@ -15,9 +15,25 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub const DESC: BackendDesc = BackendDesc { name: "filmcraft", open };
+/// FilmCraft with the OS hardware decoder registered (`filmcraft-platform`): VideoToolbox on
+/// macOS, Media Foundation on Windows, NVDEC / VA-API on Linux. Streams the hardware declines
+/// (profile, size, chroma, other codecs) fall through to the software decoder; the report's
+/// `pixel_format` says which one actually ran.
+#[cfg(feature = "hw")]
+pub const DESC_HW: BackendDesc = BackendDesc { name: "filmcraft-hw", open: open_hw };
 
 pub fn open(path: &Path) -> Result<Box<dyn Decoder>> {
-    Ok(Box::new(FilmCraft::open(path)?))
+    Ok(Box::new(FilmCraft::open(path, false)?))
+}
+
+#[cfg(feature = "hw")]
+pub fn open_hw(path: &Path) -> Result<Box<dyn Decoder>> {
+    use std::sync::OnceLock;
+    static REGISTERED: OnceLock<filmcraft_platform::Availability> = OnceLock::new();
+    match REGISTERED.get_or_init(filmcraft_platform::register) {
+        filmcraft_platform::Availability::Available(_) => Ok(Box::new(FilmCraft::open(path, true)?)),
+        filmcraft_platform::Availability::Unavailable(why) => Err(DecodeError::Unsupported(format!("no hardware decoder: {why}"))),
+    }
 }
 
 pub struct FilmCraft {
@@ -25,10 +41,16 @@ pub struct FilmCraft {
     info: StreamInfo,
     next: u64,
     frames: u64,
+    /// Ask for the hardware decoder. The switch is process-global and read when a stream's
+    /// decoder is first created, so it is set again before every request: `compare` runs two
+    /// backends in one process.
+    hardware: bool,
+    hw_frames_at_open: u64,
 }
 
 impl FilmCraft {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path, hardware: bool) -> Result<Self> {
+        filmcraft_codecs::hw::set_hardware_decoding(hardware);
         let bytes: Arc<[u8]> = std::fs::read(path)?.into();
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let source = filmcraft_codecs::open_bytes(&name, bytes).map_err(open_error)?;
@@ -45,7 +67,22 @@ impl FilmCraft {
             frame_count: None,
         };
         let frames = info.frames();
-        Ok(Self { source, info, next: 0, frames })
+        Ok(Self { source, info, next: 0, frames, hardware, hw_frames_at_open: filmcraft_codecs::hw::hw_stats().frames })
+    }
+
+    /// After the first picture: record in `pixel_format` whether hardware actually decoded it.
+    fn note_backend(&mut self) {
+        if self.next != 1 {
+            return;
+        }
+        let stats = filmcraft_codecs::hw::hw_stats();
+        let hw = stats.frames > self.hw_frames_at_open;
+        let tag = match (self.hardware, hw, filmcraft_codecs::hw::hw_backend()) {
+            (true, true, Some(b)) => format!(" ({b})"),
+            (true, false, _) => " (software; hardware declined)".to_string(),
+            _ => String::new(),
+        };
+        self.info.pixel_format.push_str(&tag);
     }
 
     /// Media time to ask for frame `index`: a quarter of a frame past its start. FilmCraft
@@ -119,8 +156,10 @@ impl Decoder for FilmCraft {
             return Ok(None);
         }
         let t = self.tick_of(self.next);
+        filmcraft_codecs::hw::set_hardware_decoding(self.hardware);
         let vf = self.source.video_frame(FrameRequest::full(t)).map_err(decode_error)?;
         self.next += 1;
+        self.note_backend();
         convert(&vf).map(Some)
     }
     fn seek(&mut self, index: u64) -> Result<()> {

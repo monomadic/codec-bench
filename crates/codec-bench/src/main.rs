@@ -41,6 +41,13 @@ struct ScenarioOpts {
     /// Seek to these frame indices (comma-separated) instead of random targets.
     #[arg(long, value_delimiter = ',')]
     targets: Vec<u64>,
+    /// Write luma dumps (`<index>.y`) to this directory for PSNR in the report (`run` only;
+    /// `suite --psnr` places them under the run directory).
+    #[arg(long)]
+    dump: Option<PathBuf>,
+    /// In the decode scenario, dump every Nth frame (plus the seek targets).
+    #[arg(long, default_value_t = 50)]
+    dump_every: u64,
 }
 
 #[derive(Subcommand)]
@@ -77,6 +84,11 @@ enum Cmd {
         /// Kill a run after this many seconds.
         #[arg(long, default_value_t = 300.0)]
         timeout: f64,
+        /// Dump luma planes (seeked frames; every `--dump-every`th decoded frame and the seek
+        /// targets) under <out>/frames so the report can show PSNR. Roughly 2 MB per 1080p
+        /// frame, 8 MB at 4K, per backend.
+        #[arg(long)]
+        psnr: bool,
         #[command(flatten)]
         opts: ScenarioOpts,
     },
@@ -118,7 +130,7 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string(&result)?);
             Ok(())
         }
-        Cmd::Suite { corpus, set, backends: names, scenarios: scs, out, timeout, opts } => {
+        Cmd::Suite { corpus, set, backends: names, scenarios: scs, out, timeout, psnr, opts } => {
             let chosen: Vec<_> = if names.is_empty() {
                 backends::all().iter().map(|b| b.name.to_string()).collect()
             } else {
@@ -131,7 +143,7 @@ fn main() -> Result<()> {
             };
             let scs = if scs.is_empty() { Scenario::ALL.to_vec() } else { scs };
             let out = out.unwrap_or_else(|| PathBuf::from("runs").join(chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()));
-            runner::suite(&corpus, &set, &chosen, &scs, &out, timeout, &opts.into())
+            runner::suite(&corpus, &set, &chosen, &scs, &out, timeout, psnr, &opts.into())
         }
         Cmd::Report { dir, reference } => {
             let md = report::render(&dir, &reference)?;
@@ -149,6 +161,6 @@ fn main() -> Result<()> {
 
 impl From<ScenarioOpts> for scenarios::Opts {
     fn from(o: ScenarioOpts) -> Self {
-        scenarios::Opts { max_frames: o.max_frames, seeks: o.seeks, seed: o.seed, hash: o.hash, targets: o.targets }
+        scenarios::Opts { max_frames: o.max_frames, seeks: o.seeks, seed: o.seed, hash: o.hash, targets: o.targets, dump: o.dump, dump_every: o.dump_every }
     }
 }

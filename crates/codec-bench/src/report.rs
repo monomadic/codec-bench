@@ -2,9 +2,10 @@
 //! reference backend's per-frame MD5s when both runs recorded them (`--hash`).
 
 use anyhow::Result;
+use harness_core::dump::Luma;
 use harness_core::{Outcome, RunResult, Scenario};
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 
 pub fn render(dir: &Path, reference: &str) -> Result<String> {
     let results = crate::runner::results_of(dir)?;
@@ -15,6 +16,7 @@ pub fn render(dir: &Path, reference: &str) -> Result<String> {
     // Reference first, then the rest in name order.
     backends.sort_by_key(|b| (b != reference, b.clone()));
 
+    let mut dumps: DumpCache = HashMap::new();
     let mut md = String::new();
     md.push_str(&format!("# codec-bench report\n\n`{}`\n\n", dir.display()));
     if !meta.is_empty() {
@@ -34,10 +36,11 @@ pub fn render(dir: &Path, reference: &str) -> Result<String> {
         md.push_str(&format!("## {}\n\n", sc.name()));
         match sc {
             Scenario::Decode => {
-                md.push_str(&format!("Per frame: wall ms / CPU core-ms (process + children). Exact: every frame's MD5 equals `{reference}`'s.\n\n"));
-                md.push_str(&header(&backends, &["ms/frame", "cpu ms/frame", "exact"]));
+                md.push_str(&format!("Per frame: wall ms / CPU core-ms (process + children). Exact: every frame's MD5 equals `{reference}`'s. PSNR: the lowest luma PSNR over the dumped frames against `{reference}`'s frame at the same index (`suite --psnr`); ∞ when every dumped frame is identical.\n\n"));
+                md.push_str(&header(&backends, &["ms/frame", "cpu ms/frame", "exact", "min PSNR"]));
                 for (file, rs) in &rows {
                     let r_ref = rs.iter().find(|r| r.backend == reference);
+                    let truth_dump = r_ref.and_then(|r| r.dump_dir.clone()).map(PathBuf::from);
                     let cells: Vec<String> = backends
                         .iter()
                         .map(|b| match rs.iter().find(|r| &r.backend == b) {
@@ -49,7 +52,11 @@ pub fn render(dir: &Path, reference: &str) -> Result<String> {
                                     Some(x) => exactness(&x.frame_md5, &r.frame_md5),
                                     None => "—".into(),
                                 };
-                                format!("{f:.2} / {} / {exact}", cpu.map(|c| format!("{c:.1}")).unwrap_or("—".into()))
+                                let psnr = match (&truth_dump, &r.dump_dir) {
+                                    (Some(t), Some(d)) if r.backend != reference => min_psnr(&mut dumps, t, Path::new(d), None),
+                                    _ => "—".into(),
+                                };
+                                format!("{f:.2} / {} / {exact} / {psnr}", cpu.map(|c| format!("{c:.1}")).unwrap_or("—".into()))
                             }
                             Some(r) => outcome_cell(&r.outcome),
                             None => "—".into(),
@@ -60,10 +67,11 @@ pub fn render(dir: &Path, reference: &str) -> Result<String> {
             }
             Scenario::Seek => {
                 md.push_str(&format!("Exact random seeks: p50 / p95 ms. True: the seeked frame's MD5 equals the frame at that index in `{reference}`'s *sequential* decode of the same file (ground truth, needs a decode run with `--hash` that covers the index); otherwise falls back to `{reference}`'s own seek result for that target, marked `~`. The `ffmpeg` CLI backend respawns a process per seek, so its numbers are a ceiling, not a baseline (build with `--features libav` for in-process numbers).\n\n"));
-                md.push_str(&header(&backends, &["p50", "p95", "true"]));
+                md.push_str(&header(&backends, &["p50", "p95", "true", "min PSNR"]));
                 for (file, rs) in &rows {
                     let r_ref = rs.iter().find(|r| r.backend == reference);
                     let truth = results.iter().find(|r| r.backend == reference && r.scenario == Scenario::Decode && short(&r.file) == *file && !r.frame_md5.is_empty());
+                    let truth_dump = results.iter().find(|r| r.backend == reference && r.scenario == Scenario::Decode && short(&r.file) == *file && r.dump_dir.is_some()).and_then(|r| r.dump_dir.clone()).map(PathBuf::from);
                     let cells: Vec<String> = backends
                         .iter()
                         .map(|b| match rs.iter().find(|r| &r.backend == b) {
@@ -75,7 +83,14 @@ pub fn render(dir: &Path, reference: &str) -> Result<String> {
                                     (_, Some(x)) => format!("~{}", seek_sameness(x, r)),
                                     _ => "—".into(),
                                 };
-                                format!("{:.1} / {:.1} / {same}", s.p50, s.p95)
+                                let psnr = match (&truth_dump, &r.dump_dir) {
+                                    (Some(t), Some(d)) => {
+                                        let idx: Vec<u64> = r.seeks.iter().map(|s| s.index).collect();
+                                        min_psnr(&mut dumps, t, Path::new(d), Some(&idx))
+                                    }
+                                    _ => "—".into(),
+                                };
+                                format!("{:.1} / {:.1} / {same} / {psnr}", s.p50, s.p95)
                             }
                             Some(r) => outcome_cell(&r.outcome),
                             None => "—".into(),
@@ -103,6 +118,41 @@ pub fn render(dir: &Path, reference: &str) -> Result<String> {
         md.push('\n');
     }
     Ok(md)
+}
+
+type DumpCache = HashMap<PathBuf, Option<std::sync::Arc<Luma>>>;
+
+fn load(cache: &mut DumpCache, path: PathBuf) -> Option<std::sync::Arc<Luma>> {
+    cache.entry(path.clone()).or_insert_with(|| Luma::read(&path).ok().map(std::sync::Arc::new)).clone()
+}
+
+/// The lowest luma PSNR of `dir`'s dumped frames against `truth`'s frame of the same index.
+/// `indices`: compare only these (seeks); `None`: every dump in `dir` that `truth` also has.
+fn min_psnr(cache: &mut DumpCache, truth: &Path, dir: &Path, indices: Option<&[u64]>) -> String {
+    let idx: Vec<u64> = match indices {
+        Some(i) => i.to_vec(),
+        None => std::fs::read_dir(dir)
+            .map(|rd| rd.flatten().filter_map(|e| e.path().file_stem()?.to_str()?.parse().ok()).collect())
+            .unwrap_or_default(),
+    };
+    let (mut min, mut n, mut inf) = (f64::INFINITY, 0, 0);
+    for i in idx {
+        let (Some(a), Some(b)) = (load(cache, truth.join(format!("{i}.y"))), load(cache, dir.join(format!("{i}.y")))) else { continue };
+        let Some(db) = b.psnr(&a) else { continue };
+        n += 1;
+        if db.is_infinite() {
+            inf += 1;
+        } else {
+            min = min.min(db);
+        }
+    }
+    if n == 0 {
+        "—".into()
+    } else if inf == n {
+        format!("∞ ({n})")
+    } else {
+        format!("{min:.1} dB ({n})")
+    }
 }
 
 fn header(backends: &[String], cols: &[&str]) -> String {

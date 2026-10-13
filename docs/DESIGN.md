@@ -68,6 +68,14 @@ request; `compare` runs two backends in one process. Report software and hardwar
 separate columns; never average them. Both hardware backends download every frame to CPU planes
 so it can be hashed; a zero-copy texture path would be faster in an app and is out of scope.
 
+## PSNR without cross-decoding
+
+A run never decodes with a second backend (that would charge the reference's CPU to the backend
+under test). Instead `--psnr` makes each run write luma planes to disk between decode calls, and
+the report computes PSNR from the files. The decode scenario dumps every Nth frame and the seek
+targets (derived from the same seed), so a seek's PSNR is against the reference's *sequential*
+frame, like the `true` column. Size is the trade: ~2 MB per 1080p frame.
+
 ## Seek truth
 
 A seek's correct answer is the frame the same reference produces by decoding sequentially to
@@ -81,7 +89,6 @@ back to the reference's seek and marks the cell `~`.
 1. ~~`libav` backend (port `SeekablePlayer`)~~ done; `libav-vt` too.
 2. Conformance adapters for libvpx/AOM `.md5` files (the easy ones), then JCT-VC SEI hashes.
 3. ~~`filmcraft-hw` feature at a newer FilmCraft pin~~ done.
-4. A PSNR column in the report's seek and decode tables, so one-LSB differences (ProRes) read as
-   near-exact rather than wrong; needs frames or a second hash of the frame quantised by one bit.
+4. ~~A PSNR column~~ done (`suite --psnr`, luma dumps under the run directory).
 5. A `library` set from real clips (phone VFR, HDR, iCloud placeholders) with a `scripts/add-library.sh` that writes manifest rows.
 6. First `backend-own` target: ProRes 422 (SMPTE RDD 36), judged against ffmpeg with PSNR ≥ 70 dB and against FilmCraft bit-exactly if you choose the same rounding.

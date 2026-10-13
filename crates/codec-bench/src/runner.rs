@@ -44,12 +44,13 @@ struct Meta<'a> {
     scenarios: Vec<&'static str>,
     sets: &'a [String],
     timeout_s: f64,
+    psnr: bool,
     max_frames: u64,
     seeks: u32,
     seed: u64,
 }
 
-pub fn suite(manifest: &Path, sets: &[String], backends: &[String], scenarios: &[Scenario], out: &Path, timeout: f64, opts: &Opts) -> Result<()> {
+pub fn suite(manifest: &Path, sets: &[String], backends: &[String], scenarios: &[Scenario], out: &Path, timeout: f64, psnr: bool, opts: &Opts) -> Result<()> {
     let text = std::fs::read_to_string(manifest).with_context(|| format!("read {}", manifest.display()))?;
     let m: Manifest = toml::from_str(&text).with_context(|| format!("parse {}", manifest.display()))?;
     let base = manifest.parent().unwrap_or(Path::new("."));
@@ -67,13 +68,27 @@ pub fn suite(manifest: &Path, sets: &[String], backends: &[String], scenarios: &
         scenarios: scenarios.iter().map(|s| s.name()).collect(),
         sets,
         timeout_s: timeout,
+        psnr,
         max_frames: opts.max_frames,
         seeks: opts.seeks,
         seed: opts.seed,
     };
     std::fs::write(out.join("meta.json"), serde_json::to_string_pretty(&meta)?)?;
+    // Re-running into an existing directory replaces only the rows this run produces; the
+    // others (another scenario, another backend) stay, so a report can be assembled piecemeal.
+    let kept: Vec<RunResult> = results_of(out)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| !(backends.contains(&r.backend) && scenarios.contains(&r.scenario) && entries.iter().any(|e| base.join(&e.path).display().to_string() == r.file)))
+        .collect();
     let mut results = std::fs::File::create(out.join("results.jsonl"))?;
-    let mut log = std::fs::File::create(out.join("stderr.log"))?;
+    for r in &kept {
+        writeln!(results, "{}", serde_json::to_string(r)?)?;
+    }
+    if !kept.is_empty() {
+        eprintln!("kept {} earlier result(s) from {}", kept.len(), out.display());
+    }
+    let mut log = std::fs::OpenOptions::new().create(true).append(true).open(out.join("stderr.log"))?;
     let exe = std::env::current_exe()?;
 
     let total = entries.len() * backends.len() * scenarios.len();
@@ -93,7 +108,12 @@ pub fn suite(manifest: &Path, sets: &[String], backends: &[String], scenarios: &
             for b in backends {
                 n += 1;
                 eprint!("[{n}/{total}] {b:<10} {:<7} {} … ", sc.name(), e.path);
-                let r = run_one(&exe, b, *sc, &file, timeout, opts, &mut log)?;
+                let dump = (psnr && *sc != Scenario::Robust).then(|| {
+                    let stem = Path::new(&e.path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    out.join("frames").join(b).join(stem).join(sc.name())
+                });
+                let run_opts = Opts { dump, ..opts.clone() };
+                let r = run_one(&exe, b, *sc, &file, timeout, &run_opts, &mut log)?;
                 eprintln!("{}", describe(&r));
                 writeln!(results, "{}", serde_json::to_string(&r)?)?;
             }
@@ -132,6 +152,9 @@ fn run_one(exe: &Path, backend: &str, sc: Scenario, file: &Path, timeout: f64, o
     }
     if !opts.targets.is_empty() {
         cmd.arg("--targets").arg(opts.targets.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","));
+    }
+    if let Some(d) = &opts.dump {
+        cmd.arg("--dump").arg(d).arg("--dump-every").arg(opts.dump_every.to_string());
     }
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -248,9 +271,11 @@ fn ffmpeg_version() -> Option<String> {
     }
 }
 
-#[allow(dead_code)]
 pub fn results_of(dir: &Path) -> Result<Vec<RunResult>> {
     let p: PathBuf = dir.join("results.jsonl");
+    if !p.exists() {
+        return Ok(Vec::new());
+    }
     let text = std::fs::read_to_string(&p).with_context(|| format!("read {}", p.display()))?;
     text.lines().filter(|l| !l.trim().is_empty()).map(|l| serde_json::from_str(l).map_err(Into::into)).collect()
 }

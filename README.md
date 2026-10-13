@@ -23,6 +23,7 @@ pkg-config at the keg).
 cargo build --release
 ./scripts/make-fixtures.sh                # ffmpeg-generated clips → corpus/files/ (gitignored)
 ./target/release/codec-bench suite --hash --max-frames 300 --seeks 12
+./target/release/codec-bench suite --hash --psnr ...   # also dump luma planes so the report can show PSNR
 cargo build --release --features libav,filmcraft-hw   # adds libav, libav-vt and filmcraft-hw
 ./target/release/codec-bench report runs/<timestamp>
 ```
@@ -43,7 +44,9 @@ the report, not the end of the run. CPU time and peak RSS come from the kernel's
 ## Scenarios
 
 - **decode**: every frame (or the first N) in order; wall ms per frame, CPU core-ms per frame, per-frame MD5 with `--hash`.
-- **seek**: N random exact seeks from a seed (every backend gets the same targets); p50/p95 latency and whether the seeked frames match the reference's.
+- **seek**: N random exact seeks from a seed (every backend gets the same targets); p50/p95 latency and whether the seeked frames match the reference's sequential decode at the same index.
+
+With `--psnr` each run also dumps luma planes (`<out>/frames/<backend>/<file>/<scenario>/<index>.y`): every seeked frame, and in decode every `--dump-every`-th frame (default 50) plus the seek targets. The report reads them back and adds a **min PSNR** column: the lowest luma PSNR of a backend's dumped frames against the reference's sequential-decode frame of the same index, ∞ when all identical. Dumps run to ~2 MB per 1080p frame and 8 MB at 4K, per backend; nothing is dumped for the robust scenario. Dumping and hashing happen between decode calls, so timings exclude them, but gigabytes of writes evict the fixtures from the page cache, and seek latencies of large files (ProRes especially) read higher on a `--psnr` run than on a plain one. Take timings from a run without `--psnr`, and PSNR from one with it; `suite --out <same dir>` merges, replacing only the rows it re-runs.
 - **robust**: open and decode a little; the only output is how it failed. Malformed files run only this.
 
 The runner never judges. The report compares. If you want pass/fail, write it over `results.jsonl`.
@@ -78,7 +81,7 @@ Exact random seeks on long-GOP (250) fixtures, p50 ms:
 - **FilmCraft's HEVC seek failure at the old pin (`2c5ba7a`) is fixed at `cee1feb`.** AV1 seeks went from 1345 to 812 ms between the pins; sequential AV1 is still ~10× slower than dav1d.
 
 - **In-process libav is bit-exact with the CLI everywhere, and so is VideoToolbox** on these fixtures (NV12/P010 de-interleaved; samples identical). So a hardware path can be checked for correctness, not just speed.
-- **ProRes shows `0/12` true seeks for FilmCraft**: that is the one-LSB rounding difference from the decode table, not wrong frames (`compare` gives 74.5 dB). A bit-exact column cannot tell the two apart; PSNR can.
+- **ProRes shows `0/12` true seeks for FilmCraft** with a min PSNR around 74 dB: one-LSB rounding, not wrong frames. ffmpeg's wrong HEVC seek shows as `11/12` with a PSNR in the twenties: a different picture. The PSNR column is what tells those apart.
 - **VideoToolbox seeks are slower in wall time than software on long-GOP 8-bit H.264 and VP9, at a tenth of the CPU.** An exact seek is a serial GOP decode (~7 ms/frame under VT, as switchblade's design record says); software fans the GOP across cores. VT wins outright on 10-bit HEVC. This is the number that settles scrub = keyframe seeks, settle = one exact seek.
 - **Sequential decode CPU per frame**, 1080p H.264: CLI 11.8, libav 9.0, VT 5.0, FilmCraft 16.3 core-ms. `libav-vt` wall per frame includes the download to CPU memory (~3 ms at 1080p).
 

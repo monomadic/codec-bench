@@ -278,6 +278,9 @@ pub struct RunResult {
     pub cpu_ms: Option<f64>,
     pub peak_rss_bytes: Option<u64>,
     pub host: Option<String>,
+    /// Where this run wrote luma dumps (`<index>.y`), when asked to.
+    #[serde(default)]
+    pub dump_dir: Option<String>,
 }
 
 impl RunResult {
@@ -298,6 +301,7 @@ impl RunResult {
             cpu_ms: None,
             peak_rss_bytes: None,
             host: None,
+            dump_dir: None,
         }
     }
 
@@ -337,5 +341,107 @@ mod tests {
         let db = f.luma_psnr(&g).unwrap();
         assert!(db > 50.0 && db < 60.0, "{db}");
         assert_ne!(f.md5(), g.md5());
+    }
+}
+
+/// Luma-plane dumps: what the report needs to compute PSNR between backends after the fact,
+/// without either process decoding the other's frames. One file per frame, `<index>.y`:
+/// magic `CBY1`, width, height, bits (u32 LE each), then the samples (u8, or u16 LE).
+pub mod dump {
+    use super::{Frame, Planes};
+    use std::io::{Read, Write};
+    use std::path::Path;
+
+    const MAGIC: &[u8; 4] = b"CBY1";
+
+    pub struct Luma {
+        pub width: u32,
+        pub height: u32,
+        pub bits: u32,
+        pub samples: Vec<u16>,
+    }
+
+    impl Luma {
+        pub fn of(frame: &Frame) -> Option<Self> {
+            let samples = match &frame.planes {
+                Planes::Yuv8(ps) => ps.first()?.iter().map(|&s| s as u16).collect(),
+                Planes::Yuv16 { planes, .. } => planes.first()?.clone(),
+                Planes::Rgba8(_) => return None,
+            };
+            Some(Self { width: frame.width, height: frame.height, bits: frame.planes.bits(), samples })
+        }
+
+        pub fn write(&self, path: &Path) -> std::io::Result<()> {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
+            f.write_all(MAGIC)?;
+            for v in [self.width, self.height, self.bits] {
+                f.write_all(&v.to_le_bytes())?;
+            }
+            if self.bits <= 8 {
+                f.write_all(&self.samples.iter().map(|&s| s as u8).collect::<Vec<u8>>())?;
+            } else {
+                let mut buf = Vec::with_capacity(self.samples.len() * 2);
+                for s in &self.samples {
+                    buf.extend_from_slice(&s.to_le_bytes());
+                }
+                f.write_all(&buf)?;
+            }
+            f.flush()
+        }
+
+        pub fn read(path: &Path) -> std::io::Result<Self> {
+            let mut f = std::io::BufReader::new(std::fs::File::open(path)?);
+            let mut head = [0u8; 16];
+            f.read_exact(&mut head)?;
+            if &head[..4] != MAGIC {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "not a luma dump"));
+            }
+            let u = |i: usize| u32::from_le_bytes([head[i], head[i + 1], head[i + 2], head[i + 3]]);
+            let (width, height, bits) = (u(4), u(8), u(12));
+            let n = width as usize * height as usize;
+            let mut body = Vec::new();
+            f.read_to_end(&mut body)?;
+            let samples: Vec<u16> = if bits <= 8 {
+                body.iter().map(|&b| b as u16).collect()
+            } else {
+                body.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+            };
+            if samples.len() != n {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "luma dump size mismatch"));
+            }
+            Ok(Self { width, height, bits, samples })
+        }
+
+        /// PSNR in dB against `other`; `None` when sizes or depths differ; infinite when equal.
+        pub fn psnr(&self, other: &Luma) -> Option<f64> {
+            if (self.width, self.height, self.bits) != (other.width, other.height, other.bits) || self.samples.is_empty() {
+                return None;
+            }
+            let mse = self.samples.iter().zip(&other.samples).map(|(&a, &b)| (a as f64 - b as f64).powi(2)).sum::<f64>() / self.samples.len() as f64;
+            let peak = ((1u32 << self.bits) - 1) as f64;
+            Some(if mse == 0.0 { f64::INFINITY } else { 10.0 * (peak * peak / mse).log10() })
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::{Chroma, Frame, Planes};
+
+        #[test]
+        fn round_trip_and_psnr() {
+            let dir = std::env::temp_dir().join(format!("codec-bench-dump-{}", std::process::id()));
+            let f = Frame { width: 3, height: 2, chroma: Chroma::C444, planes: Planes::Yuv16 { planes: vec![vec![1, 2, 3, 4, 5, 1023]; 3], bits: 10 }, pts_s: 0.0 };
+            let l = Luma::of(&f).unwrap();
+            let p = dir.join("7.y");
+            l.write(&p).unwrap();
+            let back = Luma::read(&p).unwrap();
+            assert_eq!(back.samples, l.samples);
+            assert_eq!(back.psnr(&l), Some(f64::INFINITY));
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }

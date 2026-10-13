@@ -23,23 +23,33 @@ if need $F/h264_2160p_gop250.mp4; then echo "h264 2160p"; $FF -f lavfi -i "$(src
   -c:v libx264 -preset fast -profile:v high -g 250 -keyint_min 250 -bf 3 -pix_fmt yuv420p -movflags +faststart $F/h264_2160p_gop250.mp4; fi
 if need $F/h264_1080p_intra.mp4; then echo "h264 intra"; $FF -f lavfi -i "$(src 1920 1080 30)" \
   -c:v libx264 -preset medium -g 1 -pix_fmt yuv420p $F/h264_1080p_intra.mp4; fi
+# Every codec at 1080p and 2160p: libraries are mostly one or the other.
 if have libx265; then
-  if need $F/hevc_1080p_gop250.mp4; then echo "hevc 1080p"; $FF -f lavfi -i "$(src 1920 1080 30)" \
-    -c:v libx265 -preset medium -x265-params "keyint=250:min-keyint=250:log-level=error" -pix_fmt yuv420p -tag:v hvc1 $F/hevc_1080p_gop250.mp4; fi
-  if need $F/hevc_1080p10_gop250.mp4; then echo "hevc 1080p10"; $FF -f lavfi -i "$(src 1920 1080 30)" \
-    -c:v libx265 -preset medium -x265-params "keyint=250:min-keyint=250:log-level=error" -pix_fmt yuv420p10le -tag:v hvc1 $F/hevc_1080p10_gop250.mp4; fi
+  for R in "1080p 1920 1080" "2160p 3840 2160"; do set -- $R
+    if need $F/hevc_${1}_gop250.mp4; then echo "hevc $1"; $FF -f lavfi -i "$(src $2 $3 30)" \
+      -c:v libx265 -preset medium -x265-params "keyint=250:min-keyint=250:log-level=error" -pix_fmt yuv420p -tag:v hvc1 $F/hevc_${1}_gop250.mp4; fi
+    if need $F/hevc_${1}10_gop250.mp4; then echo "hevc ${1}10"; $FF -f lavfi -i "$(src $2 $3 30)" \
+      -c:v libx265 -preset medium -x265-params "keyint=250:min-keyint=250:log-level=error" -pix_fmt yuv420p10le -tag:v hvc1 $F/hevc_${1}10_gop250.mp4; fi
+  done
 else echo "skip hevc: no libx265"; fi
 if have libvpx-vp9; then
-  if need $F/vp9_1080p.webm; then echo "vp9"; $FF -f lavfi -i "$(src 1920 1080 30)" \
-    -c:v libvpx-vp9 -b:v 4M -deadline good -cpu-used 4 -g 250 -pix_fmt yuv420p $F/vp9_1080p.webm; fi
+  for R in "1080p 1920 1080 4M" "2160p 3840 2160 16M"; do set -- $R
+    if need $F/vp9_$1.webm; then echo "vp9 $1"; $FF -f lavfi -i "$(src $2 $3 30)" \
+      -c:v libvpx-vp9 -b:v $4 -deadline good -cpu-used 4 -row-mt 1 -g 250 -pix_fmt yuv420p $F/vp9_$1.webm; fi
+  done
 else echo "skip vp9: no libvpx-vp9"; fi
-if need $F/av1_1080p.mp4; then
-  if have libsvtav1; then echo "av1 (svt)"; $FF -f lavfi -i "$(src 1920 1080 30)" -c:v libsvtav1 -preset 8 -g 250 -pix_fmt yuv420p $F/av1_1080p.mp4
-  elif have libaom-av1; then echo "av1 (aom)"; $FF -f lavfi -i "$(src 1920 1080 30)" -c:v libaom-av1 -cpu-used 8 -g 250 -pix_fmt yuv420p $F/av1_1080p.mp4
-  else echo "skip av1: no encoder"; fi
-fi
-if need $F/prores422_1080p.mov; then echo "prores 422"; $FF -f lavfi -i "$(src 1920 1080 30)" \
+for R in "1080p 1920 1080" "2160p 3840 2160"; do set -- $R
+  if need $F/av1_$1.mp4; then
+    if have libsvtav1; then echo "av1 $1 (svt)"; $FF -f lavfi -i "$(src $2 $3 30)" -c:v libsvtav1 -preset 8 -g 250 -pix_fmt yuv420p $F/av1_$1.mp4
+    elif have libaom-av1; then echo "av1 $1 (aom)"; $FF -f lavfi -i "$(src $2 $3 30)" -c:v libaom-av1 -cpu-used 8 -g 250 -pix_fmt yuv420p $F/av1_$1.mp4
+    else echo "skip av1: no encoder"; fi
+  fi
+done
+if need $F/prores422_1080p.mov; then echo "prores 422 1080p"; $FF -f lavfi -i "$(src 1920 1080 30)" \
   -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le $F/prores422_1080p.mov; fi
+# 2160p ProRes is ~75 MB/s: 8 seconds, not $SECS.
+if need $F/prores422_2160p.mov; then echo "prores 422 2160p"; $FF -f lavfi -i "testsrc2=size=3840x2160:rate=30:duration=8,noise=alls=12:allf=t+u:all_seed=42,format=yuv420p" \
+  -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le $F/prores422_2160p.mov; fi
 if need $F/h264_720p_vfr.mp4; then echo "h264 vfr"; $FF -f lavfi -i "$(src 1280 720 30)" \
   -vf "setpts=PTS+random(1)*0.02/TB" -fps_mode passthrough -c:v libx264 -preset fast -g 60 -pix_fmt yuv420p $F/h264_720p_vfr.mp4; fi
 

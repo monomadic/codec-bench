@@ -1,0 +1,9 @@
+[package]
+name = "backend-own"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Your decoder. Starts by failing every vector; the report shows the ladder up"
+
+[dependencies]
+harness-core = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name = "backend-ffmpeg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The oracle: ffmpeg/ffprobe as external processes (always available); an in-process libav backend behind the `libav` feature"
+
+[features]
+default = []
+# In-process libav through rsmpeg, for seek-latency numbers that aren't dominated by process
+# spawn. Needs ffmpeg 8.x dev headers and pkg-config. Not implemented yet: see src/libav.rs.
+libav = []
+
+[dependencies]
+harness-core = { workspace = true }
+serde_json = { workspace = true }

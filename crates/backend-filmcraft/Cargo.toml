@@ -1,0 +1,13 @@
+[package]
+name = "backend-filmcraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FilmCraft's pure-Rust demuxers and decoders (what EffectCraft uses), pinned to one git revision"
+
+[dependencies]
+harness-core = { workspace = true }
+filmcraft-codecs = { workspace = true }
+filmcraft-media = { workspace = true }
+filmcraft-frame = { workspace = true }
+filmcraft-time = { workspace = true }

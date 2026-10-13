@@ -1,0 +1,89 @@
+# The corpus. Paths are relative to this file; files live under corpus/files/ (gitignored) and
+# are produced by scripts/make-fixtures.sh (set = "fixtures"), fetched by
+# scripts/fetch-conformance.sh (set = "conformance"), or added by hand (set = "library",
+# "malformed"). Keep a line here for every file so runs are reproducible.
+#
+# sets:
+#   fixtures     ffmpeg-generated testsrc2 + noise clips with known GOP structure
+#   conformance  public conformance bitstreams (JVT, JCT-VC, libvpx, AOM)
+#   library      real-world clips (phones, cameras, AI generators, VJ packs); never committed
+#   malformed    truncated / corrupted / fuzzed files; only the robust scenario
+
+# ---- fixtures (scripts/make-fixtures.sh) ----
+[[file]]
+path = "files/fixtures/h264_1080p_gop250.mp4"
+set = "fixtures"
+codec = "h264"
+notes = "libx264 high, yuv420p, GOP 250, B-frames; the long-GOP seek case"
+
+[[file]]
+path = "files/fixtures/h264_2160p_gop250.mp4"
+set = "fixtures"
+codec = "h264"
+notes = "4K long GOP; the case that decides whether software decode is viable"
+
+[[file]]
+path = "files/fixtures/hevc_1080p_gop250.mp4"
+set = "fixtures"
+codec = "hevc"
+notes = "libx265 main, yuv420p, GOP 250"
+
+[[file]]
+path = "files/fixtures/hevc_1080p10_gop250.mp4"
+set = "fixtures"
+codec = "hevc"
+notes = "libx265 main10, yuv420p10le"
+
+[[file]]
+path = "files/fixtures/h264_1080p_intra.mp4"
+set = "fixtures"
+codec = "h264"
+notes = "all-intra: isolates entropy decoding + transforms from inter prediction"
+
+[[file]]
+path = "files/fixtures/vp9_1080p.webm"
+set = "fixtures"
+codec = "vp9"
+notes = "libvpx-vp9, 1 ms Matroska timescale (the rounding case that bit EffectCraft)"
+
+[[file]]
+path = "files/fixtures/av1_1080p.mp4"
+set = "fixtures"
+codec = "av1"
+notes = "libaom-av1 or libsvtav1, whichever this ffmpeg has"
+
+[[file]]
+path = "files/fixtures/prores422_1080p.mov"
+set = "fixtures"
+codec = "prores"
+notes = "prores_ks profile 2 (422), yuv422p10le; intra-only; first target for backend-own"
+
+[[file]]
+path = "files/fixtures/h264_720p_vfr.mp4"
+set = "fixtures"
+codec = "h264"
+notes = "variable frame rate (timestamps jittered); frame index ≠ time; expect disagreement"
+
+# ---- conformance (scripts/fetch-conformance.sh) ----
+# Add one entry per bitstream you fetch, e.g.:
+# [[file]]
+# path = "files/conformance/h264/BA1_Sony_D.jsv"
+# set = "conformance"
+# codec = "h264"
+# notes = "JVT baseline, CAVLC, I/P"
+# scenarios = ["decode", "robust"]
+
+# ---- malformed ----
+[[file]]
+path = "files/malformed/h264_1080p_truncated.mp4"
+set = "malformed"
+codec = "h264"
+notes = "the first fixture cut mid-mdat (moov at the front via faststart)"
+scenarios = ["robust"]
+
+[[file]]
+path = "files/malformed/h264_1080p_bitflips.mp4"
+set = "malformed"
+codec = "h264"
+notes = "the first fixture with 200 random bytes overwritten past the moov"
+scenarios = ["robust"]

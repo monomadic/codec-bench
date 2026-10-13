@@ -58,14 +58,15 @@ near-misses.
 ## Hardware decode
 
 The comparison switchblade needs is VideoToolbox through libav versus VideoToolbox through
-FilmCraft's `filmcraft-platform`. Both are opt-in scenarios to add: the `libav` feature with the
-`videotoolbox` hwaccel, and a `filmcraft-hw` feature that depends on `filmcraft-platform` (a
-newer pin than the current one; it holds the FFI). Report software and hardware runs as separate
-rows; never average them.
+FilmCraft's `filmcraft-platform`. The first half exists (`libav-vt`, in the `libav` feature);
+the second is a `filmcraft-hw` feature that depends on `filmcraft-platform` at a newer pin than
+the current one (it holds the FFI). Report software and hardware backends as separate columns;
+never average them. `libav-vt` downloads every frame to CPU planes so it can be hashed; a
+zero-copy texture path would be faster in an app and is out of the harness's scope.
 
 ## Next steps, in order
 
-1. `libav` backend (port `SeekablePlayer`) so seek has a real baseline.
+1. ~~`libav` backend (port `SeekablePlayer`)~~ done; `libav-vt` too.
 2. Conformance adapters for libvpx/AOM `.md5` files (the easy ones), then JCT-VC SEI hashes.
 3. `filmcraft-hw` feature at a newer FilmCraft pin; VideoToolbox rows.
 4. A `library` set from real clips (phone VFR, HDR, iCloud placeholders) with a `scripts/add-library.sh` that writes manifest rows.

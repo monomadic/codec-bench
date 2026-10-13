@@ -1,0 +1,6 @@
+# For `--features libav` only: rsmpeg 0.18 compiles against ffmpeg 8.x headers, and Homebrew's
+# plain `ffmpeg` is 9.x, so point pkg-config at the keg-only `ffmpeg@8`
+# (`brew install ffmpeg@8 pkgconf`). Not forced: an explicit PKG_CONFIG_PATH still wins. The
+# default build (CLI backend only) needs none of this.
+[env]
+PKG_CONFIG_PATH = "/opt/homebrew/opt/ffmpeg@8/lib/pkgconfig:/usr/local/opt/ffmpeg@8/lib/pkgconfig"

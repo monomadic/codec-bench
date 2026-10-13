@@ -68,7 +68,7 @@ impl FfmpegCli {
         }
         cmd.arg("-i").arg(&self.path);
         cmd.args(["-map", "0:v:0", "-an", "-sn", "-dn", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", &self.pix_fmt, "-"]);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::inherit()).stdin(Stdio::null());
+        cmd.stdout(Stdio::piped()).stderr(Stdio::null()).stdin(Stdio::null());
         let mut child = cmd.spawn().map_err(|e| DecodeError::Open(format!("spawn ffmpeg: {e}")))?;
         let out = child.stdout.take().ok_or_else(|| DecodeError::Open("ffmpeg stdout".into()))?;
         self.child = Some((child, out));

@@ -8,6 +8,8 @@ pub fn all() -> &'static [BackendDesc] {
         backend_ffmpeg::DESC,
         #[cfg(feature = "libav")]
         backend_ffmpeg::libav::DESC,
+        #[cfg(all(feature = "libav", target_os = "macos"))]
+        backend_ffmpeg::libav::DESC_VT,
         #[cfg(feature = "filmcraft")]
         backend_filmcraft::DESC,
         #[cfg(feature = "own")]

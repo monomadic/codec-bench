@@ -8,9 +8,11 @@ description = "The oracle: ffmpeg/ffprobe as external processes (always availabl
 [features]
 default = []
 # In-process libav through rsmpeg, for seek-latency numbers that aren't dominated by process
-# spawn. Needs ffmpeg 8.x dev headers and pkg-config. Not implemented yet: see src/libav.rs.
-libav = []
+# spawn. Needs ffmpeg 8.x dev headers and pkg-config. See src/libav.rs.
+libav = ["dep:rsmpeg"]
 
 [dependencies]
 harness-core = { workspace = true }
 serde_json = { workspace = true }
+# ffmpeg 8.x headers via pkg-config (see .cargo/config.toml). Only with `--features libav`.
+rsmpeg = { version = "0.18", optional = true, default-features = false, features = ["link_system_ffmpeg", "ffmpeg8"] }

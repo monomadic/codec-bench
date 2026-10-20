@@ -108,3 +108,8 @@ corpus/manifest.toml     every file the suite knows about, by set
 scripts/                 make-fixtures.sh, fetch-conformance.sh
 docs/DESIGN.md           decisions and the rules for adding a backend or a corpus set
 ```
+
+## License
+
+MIT or Apache-2.0, at your option. ffmpeg is never linked by the default build; the `libav`
+feature links the system ffmpeg libraries through rsmpeg and inherits their licence terms.

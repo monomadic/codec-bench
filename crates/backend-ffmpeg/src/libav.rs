@@ -188,7 +188,11 @@ impl Libav {
             if r < 0 {
                 return Err(DecodeError::Open(format!("avcodec_parameters_to_context: {}", err_str(r))));
             }
-            (*dec.0).thread_count = 0; // auto, like the CLI
+            // Auto (frame threads) like the CLI and switchblade's player, unless
+            // CODEC_BENCH_LIBAV_THREADS says otherwise. abner runs one thread when VideoToolbox is
+            // up: frame threads add a packet of post-flush delay each and do nothing for a
+            // hardware decode. The variable exists to measure that claim.
+            (*dec.0).thread_count = std::env::var("CODEC_BENCH_LIBAV_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
             let mut hw = HwDev(ptr::null_mut());
             let mut hardware = false;
             #[cfg(target_os = "macos")]
@@ -352,6 +356,14 @@ impl Decoder for Libav {
                     }
                     self.skip_until = None;
                 }
+                // CODEC_BENCH_LIBAV_NOREADBACK=1: measure decode alone; the picture is left on
+                // the GPU and a blank frame of the right size is returned. Diagnostics only.
+                if std::env::var_os("CODEC_BENCH_LIBAV_NOREADBACK").is_some() {
+                    let pts = (*self.frame.0).best_effort_timestamp;
+                    let pts_s = if pts == ffi::AV_NOPTS_VALUE { f64::NAN } else { pts as f64 * self.tb - self.start_off };
+                    ffi::av_frame_unref(self.frame.0);
+                    return Ok(Some(Frame { width: self.info.width, height: self.info.height, chroma: Chroma::C420, planes: Planes::Yuv8(vec![Vec::new(); 3]), pts_s }));
+                }
                 return self.take().map(Some);
             }
         }
@@ -428,17 +440,21 @@ unsafe fn convert(f: *const ffi::AVFrame, pts_s: f64) -> Result<Frame> {
             x if x == ffi::AV_PIX_FMT_YUV420P12LE => planar16(Chroma::C420, 12),
             x if x == ffi::AV_PIX_FMT_YUV422P12LE => planar16(Chroma::C422, 12),
             x if x == ffi::AV_PIX_FMT_YUV444P12LE => planar16(Chroma::C444, 12),
-            x if x == ffi::AV_PIX_FMT_NV12 => {
-                let (cw, ch) = Chroma::C420.plane_size(w, h);
+            x if x == ffi::AV_PIX_FMT_NV12 || x == ffi::AV_PIX_FMT_NV16 => {
+                let chroma = if x == ffi::AV_PIX_FMT_NV12 { Chroma::C420 } else { Chroma::C422 };
+                let (cw, ch) = chroma.plane_size(w, h);
                 let uv = plane8(1, cw * 2, ch);
                 let (u, v): (Vec<u8>, Vec<u8>) = uv.chunks_exact(2).map(|c| (c[0], c[1])).unzip();
-                Frame { width: w, height: h, chroma: Chroma::C420, planes: Planes::Yuv8(vec![plane8(0, w, h), u, v]), pts_s }
+                Frame { width: w, height: h, chroma, planes: Planes::Yuv8(vec![plane8(0, w, h), u, v]), pts_s }
             }
-            x if x == ffi::AV_PIX_FMT_P010LE => {
-                let (cw, ch) = Chroma::C420.plane_size(w, h);
+            x if x == ffi::AV_PIX_FMT_P010LE || x == ffi::AV_PIX_FMT_P210LE => {
+                // 10-bit biplanar, samples in the top bits of 16 (what VideoToolbox returns for
+                // 10-bit HEVC and ProRes 422).
+                let chroma = if x == ffi::AV_PIX_FMT_P010LE { Chroma::C420 } else { Chroma::C422 };
+                let (cw, ch) = chroma.plane_size(w, h);
                 let uv = plane16(1, cw * 2, ch, 6);
                 let (u, v): (Vec<u16>, Vec<u16>) = uv.chunks_exact(2).map(|c| (c[0], c[1])).unzip();
-                Frame { width: w, height: h, chroma: Chroma::C420, planes: Planes::Yuv16 { planes: vec![plane16(0, w, h, 6), u, v], bits: 10 }, pts_s }
+                Frame { width: w, height: h, chroma, planes: Planes::Yuv16 { planes: vec![plane16(0, w, h, 6), u, v], bits: 10 }, pts_s }
             }
             other => return Err(DecodeError::Unsupported(format!("pixel format {} is not planar Y'CbCr", cstr(ffi::av_get_pix_fmt_name(other))))),
         };
